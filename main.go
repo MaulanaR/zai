@@ -13,7 +13,7 @@ import (
 
 	"os"
 
-	"example.com/x/s2/gobot/model"
+	"github.com/MaulanaR/zai/model"
 	"github.com/joho/godotenv"
 	"grest.dev/grest"
 )

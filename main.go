@@ -14,6 +14,7 @@ import (
 	"os"
 
 	"github.com/MaulanaR/zai/model"
+	"github.com/MaulanaR/zai/prompt"
 	"github.com/joho/godotenv"
 	"grest.dev/grest"
 )
@@ -134,50 +135,8 @@ func NewChatBot() *ChatBot {
 	}
 }
 
-/*
-Anda adalah asisten AI yang bertugas menganalisis pesan dan menentukan kebutuhan data API.
-
-INPUT PESAN: %s
-
-TUGAS:
-1. Analisis pesan untuk menentukan apakah membutuhkan data baru dari API
-2. Identifikasi endpoint yang sesuai
-3. Tentukan parameter yang diperlukan
-
-ENDPOINTS YANG TERSEDIA:
-1. contacts
-   - Customer queries: {"is_customer": "true", "is_skip_pagination": "true"}
-   - Vendor queries: {"is_vendor": "true", "is_skip_pagination": "true"}
-   - Employee queries: {"is_employee": "true", "is_skip_pagination": "true"}
-2. sales_invoices
-   - Default params: {"is_skip_pagination": "true"}
-3. products
-   - Default params: {"is_skip_pagination": "true"}
-
-PARAMETER TANGGAL:
-- Rentang tanggal: date[$gte], date[$lte]
-- Tanggal spesifik: date[$eq]
-
-RULES:
-1. Jika pertanyaan bisa dijawab tanpa data API, kembalikan endpoint: "none"
-2. Jika membutuhkan data contact, tentukan tipe (customer/vendor/employee)
-3. Jika ada filter tanggal, sertakan dalam parameter
-4. Selalu sertakan "is_skip_pagination": "true" untuk semua query
-
-FORMAT RESPONSE (JSON only):
-{
-    "endpoint": string,
-    "params": {
-        key: value
-    }
-}
-*/
-
-// getAPIDecision menggunakan Claude untuk menentukan endpoint yang sesuai
-func (bot *ChatBot) getAPIDecision(message string) (*APIDecision, error) {
-	prompt := fmt.Sprintf(`%s`, message)
-
-	claudeResp, err := bot.askClaudeJson(prompt)
+func (bot *ChatBot) getAPIDecisionEndpointCategory(message string) (*APIDecision, error) {
+	claudeResp, err := bot.askClaudeJson(message, prompt.PromptDetermineAPIEndpoint())
 	if err != nil {
 		return nil, err
 	}
@@ -190,48 +149,87 @@ func (bot *ChatBot) getAPIDecision(message string) (*APIDecision, error) {
 	return &decision, nil
 }
 
-func extractJSON(input string) (string, error) {
-	// Mencari awal JSON yang ditandai dengan "json" atau tanda ```json
-	start := strings.Index(input, "```json")
-	if start == -1 {
-		start = strings.Index(input, "json\n")
-	}
-	if start != -1 {
-		// Lewati penanda json
-		if strings.HasPrefix(input[start:], "```json") {
-			start += 7 // panjang "```json"
-		} else {
-			start += 5 // panjang "json\n"
-		}
-	} else {
-		return "", nil
+// getAPIDecision menggunakan Claude untuk menentukan endpoint yang sesuai
+func (bot *ChatBot) getAPIDecision(message string, systemPrompt string) (*APIDecision, error) {
+	claudeResp, err := bot.askClaudeJson(message, systemPrompt)
+	if err != nil {
+		return nil, err
 	}
 
-	// Mencari akhir JSON
-	end := strings.Index(input[start:], "```")
-	if end == -1 {
-		// Jika tidak ada ```, ambil sampai akhir string
-		end = len(input[start:])
+	var decision APIDecision
+	if err := json.Unmarshal([]byte(claudeResp), &decision); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON: %v", err)
 	}
 
-	// Ekstrak JSON string
-	jsonStr := strings.TrimSpace(input[start : start+end])
-
-	return jsonStr, nil
+	return &decision, nil
 }
 
 // ProcessMessage dengan logika yang diperbarui
 func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
-	decision, err := bot.getAPIDecision(message)
+	endCat, err := bot.getAPIDecisionEndpointCategory(message)
 	if err != nil {
 		return &ZahirResponse{
 			Status:  "error",
-			Message: fmt.Sprintf("Gagal menentukan kebutuhan data: %v", err),
+			Message: fmt.Sprintf("Gagal menentukan kebutuhan kategori API: %v", err),
 		}
 	}
 
-	// Jika tidak memerlukan data baru
-	if decision.Endpoint == "" || decision.Endpoint == "null" {
+	if endCat.Endpoint != "" && endCat.Endpoint != "null" {
+		// memerlukan data baru
+		systemPrompt := ""
+
+		switch endCat.Endpoint {
+		case "sales_invoices":
+			systemPrompt = prompt.PromptSalesInvoiceRules()
+		case "purchases_invoices":
+			systemPrompt = prompt.PromptPurchaseInvoiceRules()
+		case "products":
+			systemPrompt = prompt.PromptProductRules()
+		case "contacts":
+			systemPrompt = prompt.PromptContactRules()
+		default:
+			systemPrompt = prompt.DefaultPromptRules()
+		}
+
+		decision := &APIDecision{}
+		if systemPrompt != "" {
+			decision, err = bot.getAPIDecision(message, systemPrompt)
+			if err != nil {
+				return &ZahirResponse{
+					Status:  "error",
+					Message: fmt.Sprintf("Gagal menentukan kebutuhan Endpoint API: %v", err),
+				}
+			}
+		} else {
+			decision.Params = map[string]string{
+				"is_skip_pagination": "true",
+			}
+		}
+
+		//set endpoint
+		decision.Endpoint = endCat.Endpoint
+		apiResp, err := bot.getDataFromAPI(decision)
+		if err != nil {
+			return &ZahirResponse{
+				Status:  "error",
+				Message: fmt.Sprintf("Gagal mengambil data: %v", err),
+			}
+		}
+		fmt.Println("===== RESPON FROM API =====")
+		fmt.Println(apiResp.Data)
+		fmt.Println("===== END RESPON FROM API =====")
+
+		interpretation, err := bot.interpretAPIResponse(message, apiResp, decision.Endpoint)
+		if err != nil {
+			return apiResp
+		}
+
+		return &ZahirResponse{
+			Status:  "OK",
+			Message: interpretation,
+		}
+
+	} else {
 		interpretation, err := bot.interpretMessage(message)
 		if err != nil {
 			return &ZahirResponse{
@@ -244,28 +242,6 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 			Message: interpretation,
 		}
 	}
-
-	// Jika memerlukan data baru
-	apiResp, err := bot.getDataFromAPI(decision)
-	if err != nil {
-		return &ZahirResponse{
-			Status:  "error",
-			Message: fmt.Sprintf("Gagal mengambil data: %v", err),
-		}
-	}
-	fmt.Println("===== RESPON FROM API =====")
-	fmt.Println(apiResp.Data)
-	fmt.Println("===== END RESPON FROM API =====")
-
-	interpretation, err := bot.interpretAPIResponse(message, apiResp, decision.Endpoint)
-	if err != nil {
-		return apiResp
-	}
-
-	return &ZahirResponse{
-		Status:  "OK",
-		Message: interpretation,
-	}
 }
 
 // Fungsi helper lainnya (getDataFromAPI, askClaude, interpretAPIResponse) tetap sama
@@ -275,7 +251,7 @@ func (bot *ChatBot) getDataFromAPI(decision *APIDecision) (*ZahirResponse, error
 		params.Add(key, value)
 	}
 
-	urlStr := fmt.Sprintf("%s/%s", BaseAPIURL, decision.Endpoint)
+	urlStr := fmt.Sprintf("%s/%s", BaseAPIURL, strings.TrimSpace(decision.Endpoint))
 	if len(params) > 0 {
 		urlStr = fmt.Sprintf("%s?%s", urlStr, params.Encode())
 	}
@@ -364,11 +340,11 @@ func (bot *ChatBot) interpretMessage(message string) (string, error) {
 	return bot.askClaudePlain(prompt)
 }
 
-func (bot *ChatBot) askClaudeJson(prompt string) (string, error) {
+func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, error) {
 	claudeReq := map[string]interface{}{
-		"user":  "maulana",
-		"model": ModelAI,
-		// "model": "gemma2-9b-it",
+		"user":        "maulana",
+		"model":       ModelAI,
+		"temperature": 0.2,
 		"messages": []map[string]string{
 			{
 				"role":    "user",
@@ -376,27 +352,8 @@ func (bot *ChatBot) askClaudeJson(prompt string) (string, error) {
 				"content": prompt,
 			},
 			{
-				"role": "system",
-				"content": fmt.Sprint(`Analyze the message and determine if new API data is required or if it can be answered using previously provided data:
-1. If new data is needed:
-Specify the appropriate endpoint and any required parameters. Use the endpoints below as per the query type:
-
-Customer queries: contacts with params={"is_customer":"true", "is_skip_pagination":"true"}
-Vendor queries: contacts with params={"is_vendor":"true", "is_skip_pagination":"true"}
-Employee queries: contacts with params={"is_employee":"true", "is_skip_pagination":"true"}
-Sales Invoice queries: sales_invoices with params={"is_skip_pagination":"true"} with avaiable field for queries : customer.name, status, payment_status, date, time, number, description, customer.name, currency.name, subtotal, total_discount, total_discount_percentage, subtotal_before_tax, total_tax, total_cash_amount, total_other, total_amount, total_payment, receivable, balance
-Product queries: products with params={"is_skip_pagination":"true"}
-Purchase Invoice queries: purchases_invoices with params={"is_skip_pagination":"true"}
-Profit and loss/profit/laba rugi queries: dashboards/profit_loss_simple
-Balance sheet/neraca queries: dashboards/balance_sheet_simple
-Daily sales data queries : dashboards/daily_sales
-For date filtering, use date[$gte], date[$lte], or date[$eq] with the format YYYY-MM-DD.
-
-2. If data has already been provided:
-Use the previously shared information and respond with "endpoint": "null". 
-
-Respond only with the JSON decision object, without any other string:
-{"endpoint": "endpoint_name","params": {"param_key":"param_value"}}`),
+				"role":    "system",
+				"content": systemPromt,
 			},
 		},
 		"response_format": map[string]string{
@@ -428,7 +385,7 @@ Respond only with the JSON decision object, without any other string:
 		return "", err
 	}
 
-	fmt.Println("RESP AI ")
+	fmt.Println("RESP AI JSON ====")
 	fmt.Println("claudeResp", claudeResp)
 
 	if choices, ok := claudeResp["choices"].([]interface{}); ok && len(choices) > 0 {
@@ -446,9 +403,9 @@ Respond only with the JSON decision object, without any other string:
 
 func (bot *ChatBot) askClaudePlain(prompt string) (string, error) {
 	claudeReq := map[string]interface{}{
-		"user":  "maulana",
-		"model": ModelAI,
-		// "model": "gemma2-9b-it",
+		"user":        "maulana",
+		"model":       ModelAI,
+		"temperature": 0.2,
 		"messages": []map[string]string{
 			{
 				"role":    "user",
@@ -457,7 +414,7 @@ func (bot *ChatBot) askClaudePlain(prompt string) (string, error) {
 			},
 			{
 				"role":    "system",
-				"content": "Answer this question using existing information, without needing new API data. Be concise and direct. Format any price values in Rupiah currency.",
+				"content": "Answer this question using existing information. Be concise and direct. Format any price values in Rupiah currency.",
 			},
 		},
 	}
@@ -501,9 +458,9 @@ func (bot *ChatBot) askClaudePlain(prompt string) (string, error) {
 
 func (bot *ChatBot) askClaudeFromAPIRes(prompt, endpoint, apiData string) (string, error) {
 	claudeReq := map[string]interface{}{
-		"user":  "maulana",
-		"model": ModelAI,
-		// "model": "gemma2-9b-it",
+		"user":        "maulana",
+		"model":       ModelAI,
+		"temperature": 0.2,
 		"messages": []map[string]string{
 			{
 				"role":    "user",
@@ -513,18 +470,25 @@ func (bot *ChatBot) askClaudeFromAPIRes(prompt, endpoint, apiData string) (strin
 			{
 				"role": "system",
 				"content": fmt.Sprintf(`Based on this API response from the %s endpoint, answer the user's question naturally.
-Focus on directly answering what they asked about. Only include relevant information. 
-Response with human chat
-if answer is nominal harga, then format it to rupiah currency.
-do not tell that the answer is from api.
+Focus on directly answering what they asked about. Only include relevant information.
+format all prices in Rupiah currency.
+use Highcharts for chart if user want it.
+respond in HTML format and in bahasa indonesia.
 
-API Response: %s
-If user want response as chart, then use highchart.
-Respond in Bahasa Indonesia and in format HTML`,
-					endpoint, apiData),
+API Response: %s`, endpoint, apiData),
 			},
 		},
 	}
+
+	// 				"content": fmt.Sprintf(`Based on this API response from the %s endpoint, answer the user's question naturally.
+	// Focus on directly answering what they asked about. Only include relevant information.
+	// Response with human chat
+	// if answer is nominal harga, then format it to rupiah currency.
+	// do not tell that the answer is from api.
+
+	// API Response: %s
+	// If user want response as chart, then use highchart.
+	// Respond in Bahasa Indonesia and in format HTML`,endpoint, apiData),
 
 	jsonData, err := json.Marshal(claudeReq)
 	if err != nil {

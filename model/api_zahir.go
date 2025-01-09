@@ -1,6 +1,8 @@
 package model
 
-import "grest.dev/grest"
+import (
+	"grest.dev/grest"
+)
 
 type ContactResp struct {
 	Data []Contact `json:"results"`
@@ -37,6 +39,7 @@ type SalesInvoiceDetail struct {
 	CurrencyName  grest.NullString   `json:"currency.name"`
 	TotalAmount   grest.NullFloat64  `json:"total_amount"`
 	TotalPayment  grest.NullFloat64  `json:"total_payment"`
+	LineItems     []LineItems        `json:"line_items"`
 	// Receivable              grest.NullFloat64  `json:"receivable"`
 	// Balance                 grest.NullFloat64  `json:"balance"`
 	// Subtotal                grest.NullFloat64  `json:"subtotal"`
@@ -46,6 +49,17 @@ type SalesInvoiceDetail struct {
 	// TotalTax                grest.NullFloat64  `json:"total_tax"`
 	// TotalCashAmount         grest.NullFloat64  `json:"total_cash_amount"`
 	// TotalOther              grest.NullFloat64  `json:"total_other"`
+}
+type LineItems struct {
+	ProductCode         grest.NullString  `json:"product.code"`
+	ProductName         grest.NullString  `json:"product.name"`
+	ProductCategoryName grest.NullString  `json:"product.category.name"`
+	UnitName            grest.NullString  `json:"unit.name"`
+	Quantity            grest.NullFloat64 `json:"quantity"`
+	UnitPrice           grest.NullFloat64 `json:"unit_price"`
+	DiscountAmount      grest.NullFloat64 `json:"discount.amount"`
+	Note                grest.NullString  `json:"note"`
+	UnitCOGS            grest.NullFloat64 `json:"unit_cogs"`
 }
 
 type ProductResp struct {

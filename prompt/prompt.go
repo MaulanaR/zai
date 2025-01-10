@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// - dashboards/daily_sales: Daily sales data queries
 func PromptDetermineAPIEndpoint() string {
 	return fmt.Sprint(`Today is %s,
 Check available data in current context first:
@@ -19,7 +20,6 @@ Then determine if new API data is needed:
 - purchases_invoices: Purchase Invoice queries
 - dashboards/profit_loss_simple: Profit and loss queries
 - dashboards/balance_sheet_simple: Balance sheet queries
-- dashboards/daily_sales: Daily sales data queries
 
 2. If ALL required data is already available in context, respond with "endpoint": "null"
 

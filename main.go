@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"os"
 
@@ -31,6 +30,8 @@ var (
 	APIUrl      string
 	Port        string
 	ModelAI     string
+	CacheChat   CacheEntry
+	CacheData   CacheEntry
 )
 
 func Init() {
@@ -45,71 +46,16 @@ func Init() {
 	Port = os.Getenv("PORT")
 }
 
-// EndpointConfig mendefinisikan konfigurasi untuk setiap endpoint
-type EndpointConfig struct {
-	Endpoint      string
-	BaseParams    map[string]string
-	Keywords      []string
-	CacheDuration time.Duration
-}
-
-// APIEndpoints menyimpan konfigurasi semua endpoint yang tersedia
-var APIEndpoints = []EndpointConfig{
-	{
-		Endpoint: "contacts",
-		BaseParams: map[string]string{
-			"is_customer":        "true",
-			"is_skip_pagination": "true",
-		},
-		Keywords:      []string{"customer", "pelanggan", "pembeli"},
-		CacheDuration: 15 * time.Minute,
-	},
-	{
-		Endpoint: "contacts",
-		BaseParams: map[string]string{
-			"is_vendor":          "true",
-			"is_skip_pagination": "true",
-		},
-		Keywords:      []string{"vendor", "supplier", "pemasok"},
-		CacheDuration: 15 * time.Minute,
-	},
-	{
-		Endpoint: "contacts",
-		BaseParams: map[string]string{
-			"is_employee":        "true",
-			"is_skip_pagination": "true",
-		},
-		Keywords:      []string{"karyawan", "pegawai", "employee"},
-		CacheDuration: 15 * time.Minute,
-	},
-	{
-		Endpoint: "sales_invoices",
-		BaseParams: map[string]string{
-			"is_skip_pagination": "true",
-		},
-		Keywords:      []string{"sales", "invoice", "penjualan", "faktur"},
-		CacheDuration: 5 * time.Minute,
-	},
-	{
-		Endpoint: "products",
-		BaseParams: map[string]string{
-			"is_skip_pagination": "true",
-		},
-		Keywords:      []string{"product", "produk", "barang"},
-		CacheDuration: 10 * time.Minute,
-	},
-}
-
-// CacheEntry menyimpan data cache beserta waktu kadaluarsanya
+// CacheEntry menyimpan data history chat
 type CacheEntry struct {
-	Data      *ZahirResponse
-	ExpiresAt time.Time
+	Data string
 }
 
 // ChatBot struktur untuk menyimpan konfigurasi chatbot
 type ChatBot struct {
-	client *http.Client
-	cache  map[string]CacheEntry
+	client    *http.Client
+	cacheChat *CacheEntry
+	cacheData *CacheEntry
 }
 
 // Struktur lainnya tetap sama
@@ -130,8 +76,9 @@ type APIDecision struct {
 
 func NewChatBot() *ChatBot {
 	return &ChatBot{
-		client: &http.Client{},
-		cache:  make(map[string]CacheEntry),
+		client:    &http.Client{},
+		cacheChat: &CacheChat,
+		cacheData: &CacheData,
 	}
 }
 
@@ -224,6 +171,9 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 			return apiResp
 		}
 
+		// add to cache
+		CacheChat = CacheEntry{interpretation}
+
 		return &ZahirResponse{
 			Status:  "OK",
 			Message: interpretation,
@@ -237,6 +187,10 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 				Message: fmt.Sprintf("Gagal menginterpretasi pesan: %v", err),
 			}
 		}
+
+		// add to cache
+		CacheChat = CacheEntry{interpretation}
+
 		return &ZahirResponse{
 			Status:  "OK",
 			Message: interpretation,
@@ -341,21 +295,42 @@ func (bot *ChatBot) interpretMessage(message string) (string, error) {
 }
 
 func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, error) {
+	//build message with assistant
+	message := []map[string]string{
+		{
+			"role":    "user",
+			"name":    "maulana",
+			"content": prompt,
+		},
+		{
+			"role":    "system",
+			"content": systemPromt,
+		},
+	}
+
+	// cache chat
+	if bot.cacheChat.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "assistant",
+			"name":    "maulana",
+			"content": bot.cacheChat.Data,
+		})
+	}
+
+	// cache data
+	if bot.cacheData.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "assistant",
+			"name":    "maulana",
+			"content": bot.cacheData.Data,
+		})
+	}
+
 	claudeReq := map[string]interface{}{
 		"user":        "maulana",
 		"model":       ModelAI,
 		"temperature": 0.2,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"name":    "maulana",
-				"content": prompt,
-			},
-			{
-				"role":    "system",
-				"content": systemPromt,
-			},
-		},
+		"messages":    message,
 		"response_format": map[string]string{
 			"type": "json_object",
 		},
@@ -402,21 +377,42 @@ func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, er
 }
 
 func (bot *ChatBot) askClaudePlain(prompt string) (string, error) {
+	//build message with assistant
+	message := []map[string]string{
+		{
+			"role":    "user",
+			"name":    "maulana",
+			"content": prompt,
+		},
+		{
+			"role": "system",
+			"content": `Answer this question using existing information. Be concise and direct. Format any price values in Rupiah currency. 
+If the question is not related to the specified data or not about Zahir, do not respond to the question.`,
+		},
+	}
+	// cache chat
+	if bot.cacheChat.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "assistant",
+			"name":    "maulana",
+			"content": bot.cacheChat.Data,
+		})
+	}
+
+	// cache data
+	if bot.cacheData.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "assistant",
+			"name":    "maulana",
+			"content": bot.cacheData.Data,
+		})
+	}
+
 	claudeReq := map[string]interface{}{
 		"user":        "maulana",
 		"model":       ModelAI,
 		"temperature": 0.2,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"name":    "maulana",
-				"content": prompt,
-			},
-			{
-				"role":    "system",
-				"content": "Answer this question using existing information. Be concise and direct. Format any price values in Rupiah currency.",
-			},
-		},
+		"messages":    message,
 	}
 
 	jsonData, err := json.Marshal(claudeReq)
@@ -457,38 +453,46 @@ func (bot *ChatBot) askClaudePlain(prompt string) (string, error) {
 }
 
 func (bot *ChatBot) askClaudeFromAPIRes(prompt, endpoint, apiData string) (string, error) {
+	//build message with assistant
+	message := []map[string]string{
+		{
+			"role":    "user",
+			"name":    "maulana",
+			"content": prompt,
+		},
+		{
+			"role": "system",
+			"content": fmt.Sprintf(`Based on this API response from the %s endpoint, answer the user's question naturally.
+			Focus on directly answering what they asked about. Only include relevant information and dont answer if the question is not related to the specified data or not about Zahir.
+			format all prices in Rupiah currency.
+			use Highcharts for chart only if user want it.
+			respond in HTML format and in bahasa indonesia.
+			API Response: %s`, endpoint, apiData),
+		},
+	}
+	// cache chat
+	if bot.cacheChat.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "assistant",
+			"name":    "maulana",
+			"content": bot.cacheChat.Data,
+		})
+	}
+
+	// cache data
+	if bot.cacheData.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "assistant",
+			"name":    "maulana",
+			"content": bot.cacheData.Data,
+		})
+	}
 	claudeReq := map[string]interface{}{
 		"user":        "maulana",
 		"model":       ModelAI,
 		"temperature": 0.2,
-		"messages": []map[string]string{
-			{
-				"role":    "user",
-				"name":    "maulana",
-				"content": prompt,
-			},
-			{
-				"role": "system",
-				"content": fmt.Sprintf(`Based on this API response from the %s endpoint, answer the user's question naturally.
-Focus on directly answering what they asked about. Only include relevant information.
-format all prices in Rupiah currency.
-use Highcharts for chart if user want it.
-respond in HTML format and in bahasa indonesia.
-
-API Response: %s`, endpoint, apiData),
-			},
-		},
+		"messages":    message,
 	}
-
-	// 				"content": fmt.Sprintf(`Based on this API response from the %s endpoint, answer the user's question naturally.
-	// Focus on directly answering what they asked about. Only include relevant information.
-	// Response with human chat
-	// if answer is nominal harga, then format it to rupiah currency.
-	// do not tell that the answer is from api.
-
-	// API Response: %s
-	// If user want response as chart, then use highchart.
-	// Respond in Bahasa Indonesia and in format HTML`,endpoint, apiData),
 
 	jsonData, err := json.Marshal(claudeReq)
 	if err != nil {
@@ -537,6 +541,11 @@ func (bot *ChatBot) interpretAPIResponse(userMessage string, apiResp *ZahirRespo
 	}
 
 	prompt := userMessage
+
+	// add to cache
+	if string(apiData) != "" || string(apiData) != "[]" {
+		CacheData = CacheEntry{"data " + endpoint + ":" + string(apiData)}
+	}
 
 	return bot.askClaudeFromAPIRes(prompt, endpoint, string(apiData))
 }

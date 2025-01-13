@@ -33,7 +33,7 @@ Respond only with the JSON decision object:
 }
 
 func DefaultPromptRules() string {
-	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params is {"is_skip_pagination":"true"}
+	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params is {"per_page":10000}
 if user request for date filtering, use param date[$gte] or date[$lte] or date[$eq] with the format YYYY-MM-DD.
 e.g : {"date[$gte]":"2000-01-25"}
 Respond only with the JSON decision object:
@@ -41,7 +41,7 @@ Respond only with the JSON decision object:
 }
 
 func PromptSalesInvoiceRules() string {
-	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"is_skip_pagination":"true"}
+	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"per_page":10000}
 avaiable field for queries : 
 customer.name, 
 payment_status [enum : open, paid],
@@ -70,7 +70,7 @@ Respond only with the JSON decision object:
 }
 
 func PromptPurchaseInvoiceRules() string {
-	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"is_skip_pagination":"true"}
+	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"per_page":10000}
 available fields for queries:
 description,
 date,
@@ -87,7 +87,7 @@ Respond only with the JSON decision object:
 }
 
 func PromptProductRules() string {
-	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"is_skip_pagination":"true"}
+	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"per_page":10000}
 available fields for queries:
 code,
 name,
@@ -109,7 +109,7 @@ Respond only with the JSON decision object:
 }
 
 func PromptContactRules() string {
-	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"is_skip_pagination":"true"}
+	return fmt.Sprint(`Today is %s, Determine params for the endpoint. default params {"per_page":10000}
 available fields for queries:
 name,
 note,

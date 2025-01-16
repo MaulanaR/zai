@@ -296,7 +296,7 @@ func GenerateResRule() string {
 	</today_date>
 	<response_rules>
 	- Jawab pertanyaan pengguna secara natural berdasarkan data yang diberikan
-	- Hanya tampilkan data yang bisa dibaca manusia
+	- Hanya tampilkan data yang bisa dibaca manusia, jangan tampilkan data yang nilainya null/NULL
 	- Hanya sertakan informasi yang relevan dan jangan menjawab jika pertanyaan tidak terkait dengan data yang ditentukan atau tidak tentang Zahir.
 	- Format semua harga dalam mata uang Rupiah.
 	- Respon dalam BAHASA INDONESIA

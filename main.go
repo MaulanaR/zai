@@ -67,11 +67,14 @@ type ZahirResponse struct {
 	Status  string      `json:"status"`
 	Message string      `json:"message"`
 	Data    interface{} `json:"results"`
+	Error   interface{} `json:"error"`
 }
 
 type APIDecision struct {
-	Endpoint string            `json:"endpoint"`
-	Params   map[string]string `json:"params"`
+	Input    bool           `json:"input"`
+	Endpoint string         `json:"endpoint"`
+	Type     string         `json:"type"`
+	Params   map[string]any `json:"params"`
 }
 
 func NewChatBot() *ChatBot {
@@ -83,7 +86,7 @@ func NewChatBot() *ChatBot {
 }
 
 func (bot *ChatBot) getAPIDecisionEndpointCategory(message string) (*APIDecision, error) {
-	claudeResp, err := bot.askClaudeJson(message, prompt.PromptDetermineAPIEndpoint())
+	claudeResp, err := bot.askClaudeJson(message, prompt.SystemMSG())
 	if err != nil {
 		return nil, err
 	}
@@ -121,80 +124,66 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 		}
 	}
 
-	if endCat.Endpoint != "" && endCat.Endpoint != "null" {
-		// memerlukan data baru
-		systemPrompt := ""
-
-		switch endCat.Endpoint {
-		case "sales_invoices":
-			systemPrompt = prompt.PromptSalesInvoiceRules()
-		case "purchases_invoices":
-			systemPrompt = prompt.PromptPurchaseInvoiceRules()
-		case "products":
-			systemPrompt = prompt.PromptProductRules()
-		case "contacts":
-			systemPrompt = prompt.PromptContactRules()
-		default:
-			systemPrompt = prompt.DefaultPromptRules()
-		}
-
-		decision := &APIDecision{}
-		if systemPrompt != "" {
-			decision, err = bot.getAPIDecision(message, systemPrompt)
+	if endCat.Input {
+		if endCat.Type == "kontak" {
+			zRes, err := bot.postToAPI(endCat.Endpoint, endCat.Params)
 			if err != nil {
 				return &ZahirResponse{
 					Status:  "error",
-					Message: fmt.Sprintf("Gagal menentukan kebutuhan Endpoint API: %v", err),
+					Message: fmt.Sprintf("Gagal input via api: %v", err),
 				}
 			}
-		} else {
-			decision.Params = map[string]string{
-				"is_skip_pagination": "true",
-			}
+
+			return &zRes
 		}
-
-		//set endpoint
-		decision.Endpoint = endCat.Endpoint
-		apiResp, err := bot.getDataFromAPI(decision)
-		if err != nil {
-			return &ZahirResponse{
-				Status:  "error",
-				Message: fmt.Sprintf("Gagal mengambil data: %v", err),
-			}
-		}
-		fmt.Println("===== RESPON FROM API =====")
-		fmt.Println(apiResp.Data)
-		fmt.Println("===== END RESPON FROM API =====")
-
-		interpretation, err := bot.interpretAPIResponse(message, apiResp, decision.Endpoint)
-		if err != nil {
-			return apiResp
-		}
-
-		// add to cache
-		CacheChat = CacheEntry{interpretation}
-
-		return &ZahirResponse{
-			Status:  "OK",
-			Message: interpretation,
-		}
-
 	} else {
-		interpretation, err := bot.interpretMessage(message)
-		if err != nil {
+		if endCat.Endpoint != "" && endCat.Endpoint != "null" {
+			// memerlukan data baru
+			apiResp, err := bot.getDataFromAPI(endCat)
+			if err != nil {
+				return &ZahirResponse{
+					Status:  "error",
+					Message: fmt.Sprintf("Gagal mengambil data: %v", err),
+				}
+			}
+			fmt.Println("===== RESPON FROM API =====")
+			fmt.Println(apiResp.Data)
+			fmt.Println("===== END RESPON FROM API =====")
+
+			interpretation, err := bot.interpretAPIResponse(message, apiResp, endCat.Endpoint)
+			if err != nil {
+				return apiResp
+			}
+
+			// add to cache
+			CacheChat = CacheEntry{interpretation}
+
 			return &ZahirResponse{
-				Status:  "error",
-				Message: fmt.Sprintf("Gagal menginterpretasi pesan: %v", err),
+				Status:  "OK",
+				Message: interpretation,
+			}
+		} else {
+			interpretation, err := bot.interpretMessage(message)
+			if err != nil {
+				return &ZahirResponse{
+					Status:  "error",
+					Message: fmt.Sprintf("Gagal menginterpretasi pesan: %v", err),
+				}
+			}
+
+			// add to cache
+			CacheChat = CacheEntry{interpretation}
+
+			return &ZahirResponse{
+				Status:  "OK",
+				Message: interpretation,
 			}
 		}
+	}
 
-		// add to cache
-		CacheChat = CacheEntry{interpretation}
-
-		return &ZahirResponse{
-			Status:  "OK",
-			Message: interpretation,
-		}
+	return &ZahirResponse{
+		Status:  "error",
+		Message: fmt.Sprintf("Gagal menentukan kebutuhan ANDA: %v", err),
 	}
 }
 
@@ -202,7 +191,7 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 func (bot *ChatBot) getDataFromAPI(decision *APIDecision) (*ZahirResponse, error) {
 	params := url.Values{}
 	for key, value := range decision.Params {
-		params.Add(key, value)
+		params.Add(key, fmt.Sprintf("%v", value))
 	}
 
 	urlStr := fmt.Sprintf("%s/%s", BaseAPIURL, strings.TrimSpace(decision.Endpoint))
@@ -298,43 +287,44 @@ func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, er
 	//build message with assistant
 	message := []map[string]string{
 		{
-			"role":    "user",
-			"name":    "maulana",
-			"content": prompt,
-		},
-		{
 			"role":    "system",
 			"content": systemPromt,
 		},
 	}
 
-	// cache chat
-	if bot.cacheChat.Data != "" {
-		message = append(message, map[string]string{
-			"role":    "assistant",
-			"name":    "maulana",
-			"content": bot.cacheChat.Data,
-		})
-	}
-
 	// cache data
 	if bot.cacheData.Data != "" {
 		message = append(message, map[string]string{
-			"role":    "assistant",
-			"name":    "maulana",
-			"content": bot.cacheData.Data,
+			"role":    "system",
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheData.Data),
 		})
 	}
+	// cache chat
+	if bot.cacheChat.Data != "" {
+		message = append(message, map[string]string{
+			"role": "assistant",
+			// "name":    "maulana",
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheChat.Data),
+		})
+	}
+	message = append(message, map[string]string{
+		"role":    "user",
+		"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(prompt),
+	})
 
 	claudeReq := map[string]interface{}{
-		"user":        "maulana",
+		// "user":        "maulana",
 		"model":       ModelAI,
 		"temperature": 0.2,
 		"messages":    message,
-		"response_format": map[string]string{
-			"type": "json_object",
-		},
+		// "response_format": map[string]string{
+		// 	"type": "json_object",
+		// },
 	}
+
+	fmt.Println("==== REQ yang dikirim ke AI ====")
+	fmt.Println(claudeReq)
+	fmt.Println("==== END REQ yang dikirim ke AI ====")
 
 	jsonData, err := json.Marshal(claudeReq)
 	if err != nil {
@@ -376,44 +366,45 @@ func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, er
 	return "", fmt.Errorf("invalid response format from Claude")
 }
 
-func (bot *ChatBot) askClaudePlain(prompt string) (string, error) {
+func (bot *ChatBot) askClaudePlain(userMsg string) (string, error) {
 	//build message with assistant
 	message := []map[string]string{
 		{
-			"role":    "user",
-			"name":    "maulana",
-			"content": prompt,
+			"role":    "system",
+			"content": prompt.GenerateResRule(),
 		},
-		{
+	}
+	// cache data
+	if bot.cacheData.Data != "" {
+		message = append(message, map[string]string{
 			"role": "system",
-			"content": `Answer this question using existing information. Be concise and direct. Format any price values in Rupiah currency. 
-If the question is not related to the specified data or not about Zahir, do not respond to the question.`,
-		},
+			// "name":    "maulana",
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheData.Data),
+		})
 	}
 	// cache chat
 	if bot.cacheChat.Data != "" {
 		message = append(message, map[string]string{
-			"role":    "assistant",
-			"name":    "maulana",
-			"content": bot.cacheChat.Data,
+			"role": "assistant",
+			// "name":    "maulana",
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheChat.Data),
 		})
 	}
-
-	// cache data
-	if bot.cacheData.Data != "" {
-		message = append(message, map[string]string{
-			"role":    "assistant",
-			"name":    "maulana",
-			"content": bot.cacheData.Data,
-		})
-	}
+	message = append(message, map[string]string{
+		"role":    "user",
+		"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(userMsg),
+	})
 
 	claudeReq := map[string]interface{}{
-		"user":        "maulana",
+		// "user":        "maulana",
 		"model":       ModelAI,
 		"temperature": 0.2,
 		"messages":    message,
 	}
+
+	fmt.Println("==== REQ yang dikirim ke AI PLAIN====")
+	fmt.Println(claudeReq)
+	fmt.Println("==== END REQ yang dikirim ke AI PLAIN====")
 
 	jsonData, err := json.Marshal(claudeReq)
 	if err != nil {
@@ -452,47 +443,44 @@ If the question is not related to the specified data or not about Zahir, do not 
 	return "", fmt.Errorf("invalid response format from Claude, detail %v", claudeResp)
 }
 
-func (bot *ChatBot) askClaudeFromAPIRes(prompt, endpoint, apiData string) (string, error) {
+func (bot *ChatBot) askClaudeFromAPIRes(userMsg, endpoint, apiData string) (string, error) {
 	//build message with assistant
 	message := []map[string]string{
 		{
-			"role":    "user",
-			"name":    "maulana",
-			"content": prompt,
+			"role":    "system",
+			"content": prompt.GenerateResRule(),
 		},
-		{
-			"role": "system",
-			"content": fmt.Sprintf(`Based on this API response from the %s endpoint, answer the user's question naturally.
-			Focus on directly answering what they asked about. Only include relevant information and dont answer if the question is not related to the specified data or not about Zahir.
-			format all prices in Rupiah currency.
-			use Highcharts for chart only if user want it.
-			respond in HTML format and in bahasa indonesia.
-			API Response: %s`, endpoint, apiData),
-		},
+	}
+	// cache data
+	if bot.cacheData.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "system",
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheData.Data),
+		})
 	}
 	// cache chat
 	if bot.cacheChat.Data != "" {
 		message = append(message, map[string]string{
 			"role":    "assistant",
-			"name":    "maulana",
-			"content": bot.cacheChat.Data,
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheChat.Data),
 		})
 	}
 
-	// cache data
-	if bot.cacheData.Data != "" {
-		message = append(message, map[string]string{
-			"role":    "assistant",
-			"name":    "maulana",
-			"content": bot.cacheData.Data,
-		})
-	}
+	message = append(message, map[string]string{
+		"role":    "user",
+		"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(userMsg),
+	})
+
 	claudeReq := map[string]interface{}{
-		"user":        "maulana",
+		// "user":        "maulana",
 		"model":       ModelAI,
 		"temperature": 0.2,
 		"messages":    message,
 	}
+
+	fmt.Println("==== REQ yang dikirim ke AI gen after API ====")
+	fmt.Println(claudeReq)
+	fmt.Println("==== END REQ yang dikirim ke AI gen after API ====")
 
 	jsonData, err := json.Marshal(claudeReq)
 	if err != nil {
@@ -581,4 +569,42 @@ func main() {
 	if err := http.ListenAndServe(Port, nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func (bot *ChatBot) postToAPI(endpoint string, params map[string]any) (ZahirResponse, error) {
+	zRes := ZahirResponse{}
+	fmt.Println("==== POST PAYLOAD====")
+	fmt.Println(params)
+	fmt.Println("==== POST PAYLOAD ====")
+
+	jsonData, err := json.Marshal(params)
+	if err != nil {
+		return zRes, err
+	}
+
+	req, err := http.NewRequest("POST", BaseAPIURL+"/"+endpoint, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return zRes, err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+BearerToken)
+	req.Header.Set("slug", Slug)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := bot.client.Do(req)
+	if err != nil {
+		return zRes, err
+	}
+	defer resp.Body.Close()
+
+	if err := json.NewDecoder(resp.Body).Decode(&zRes); err != nil {
+		return zRes, err
+	}
+
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		zRes.Status = "OK"
+		zRes.Message = "Sukses input data"
+	}
+
+	return zRes, nil
 }

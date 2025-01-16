@@ -172,6 +172,7 @@ func SystemMSG() string {
 		<endpoint_params>
 			<default_params>
 				{"per_page": "10"}
+				if endpoint is contacts, then {"per_page": "50"}
 			</default_params>
 
 			<available_fields>

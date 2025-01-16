@@ -136,6 +136,9 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 
 			return &zRes
 		}
+
+		// reset
+		CacheData = CacheEntry{}
 	} else {
 		if endCat.Endpoint != "" && endCat.Endpoint != "null" {
 			// memerlukan data baru
@@ -315,7 +318,7 @@ func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, er
 	claudeReq := map[string]interface{}{
 		// "user":        "maulana",
 		"model":       ModelAI,
-		"temperature": 0.2,
+		"temperature": 0.7,
 		"messages":    message,
 		// "response_format": map[string]string{
 		// 	"type": "json_object",
@@ -398,8 +401,9 @@ func (bot *ChatBot) askClaudePlain(userMsg string) (string, error) {
 	claudeReq := map[string]interface{}{
 		// "user":        "maulana",
 		"model":       ModelAI,
-		"temperature": 0.2,
+		"temperature": 0.7,
 		"messages":    message,
+		"max_tokens":  3500,
 	}
 
 	fmt.Println("==== REQ yang dikirim ke AI PLAIN====")
@@ -474,8 +478,9 @@ func (bot *ChatBot) askClaudeFromAPIRes(userMsg, endpoint, apiData string) (stri
 	claudeReq := map[string]interface{}{
 		// "user":        "maulana",
 		"model":       ModelAI,
-		"temperature": 0.2,
+		"temperature": 0.7,
 		"messages":    message,
+		"max_tokens":  3500,
 	}
 
 	fmt.Println("==== REQ yang dikirim ke AI gen after API ====")

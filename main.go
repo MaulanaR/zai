@@ -125,7 +125,7 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 	}
 
 	if endCat.Input {
-		if endCat.Type == "kontak" {
+		if endCat.Type == "kontak" || endCat.Type == "customer" || endCat.Type == "supplier" || endCat.Type == "employee" {
 			zRes, err := bot.postToAPI(endCat.Endpoint, endCat.Params)
 			if err != nil {
 				return &ZahirResponse{
@@ -134,6 +134,19 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 				}
 			}
 
+			// jika errornya ada, maka balikan ke ai
+			if zRes.Error != nil {
+				rs, err := bot.askAI(message, prompt.GenerateForm())
+				zRes.Status = "OK"
+				zRes.Message = rs
+				zRes.Error = nil
+				if err != nil {
+					return &ZahirResponse{
+						Status:  "Error",
+						Message: "Gagal generate form",
+					}
+				}
+			}
 			return &zRes
 		}
 
@@ -286,6 +299,91 @@ func (bot *ChatBot) interpretMessage(message string) (string, error) {
 	return bot.askClaudePlain(prompt)
 }
 
+func (bot *ChatBot) askAI(prompt string, systemPromt string) (string, error) {
+	//build message with assistant
+	message := []map[string]string{
+		{
+			"role":    "system",
+			"content": systemPromt,
+		},
+	}
+
+	// cache data
+	if bot.cacheData.Data != "" {
+		message = append(message, map[string]string{
+			"role":    "system",
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheData.Data),
+		})
+	}
+	// cache chat
+	if bot.cacheChat.Data != "" {
+		message = append(message, map[string]string{
+			"role": "assistant",
+			// "name":    "maulana",
+			"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(bot.cacheChat.Data),
+		})
+	}
+	message = append(message, map[string]string{
+		"role":    "user",
+		"content": strings.NewReplacer("\n", " ", "\t", " ").Replace(prompt),
+	})
+
+	claudeReq := map[string]interface{}{
+		// "user":        "maulana",
+		"model":       ModelAI,
+		"temperature": 0,
+		"top_p":       0.01,
+		"max_tokens":  3500,
+		"messages":    message,
+		// "response_format": map[string]string{
+		// 	"type": "json_object",
+		// },
+	}
+
+	fmt.Println("==== REQ yang dikirim ke AI ====")
+	fmt.Println(claudeReq)
+	fmt.Println("==== END REQ yang dikirim ke AI ====")
+
+	jsonData, err := json.Marshal(claudeReq)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", APIUrl, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+APIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := bot.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var claudeResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&claudeResp); err != nil {
+		return "", err
+	}
+
+	fmt.Println("RESP AI JSON ====")
+	fmt.Println("claudeResp", claudeResp)
+
+	if choices, ok := claudeResp["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if message, ok := choice["message"].(map[string]interface{}); ok {
+				if content, ok := message["content"].(interface{}); ok {
+					return fmt.Sprintf("%s", content), nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("invalid response format from Claude")
+}
+
 func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, error) {
 	//build message with assistant
 	message := []map[string]string{
@@ -318,7 +416,9 @@ func (bot *ChatBot) askClaudeJson(prompt string, systemPromt string) (string, er
 	claudeReq := map[string]interface{}{
 		// "user":        "maulana",
 		"model":       ModelAI,
-		"temperature": 0.7,
+		"temperature": 0,
+		"top_p":       0.01,
+		"max_tokens":  3500,
 		"messages":    message,
 		// "response_format": map[string]string{
 		// 	"type": "json_object",
@@ -401,7 +501,8 @@ func (bot *ChatBot) askClaudePlain(userMsg string) (string, error) {
 	claudeReq := map[string]interface{}{
 		// "user":        "maulana",
 		"model":       ModelAI,
-		"temperature": 0.7,
+		"temperature": 0,
+		"top_p":       0.01,
 		"messages":    message,
 		"max_tokens":  3500,
 	}
@@ -478,7 +579,8 @@ func (bot *ChatBot) askClaudeFromAPIRes(userMsg, endpoint, apiData string) (stri
 	claudeReq := map[string]interface{}{
 		// "user":        "maulana",
 		"model":       ModelAI,
-		"temperature": 0.7,
+		"temperature": 0,
+		"top_p":       0.01,
 		"messages":    message,
 		"max_tokens":  3500,
 	}
@@ -558,6 +660,9 @@ func webhookHandler(bot *ChatBot) http.HandlerFunc {
 		}
 
 		response := bot.ProcessMessage(req.Message)
+		response.Message = strings.ReplaceAll(response.Message, "```html", "")
+		response.Message = strings.ReplaceAll(response.Message, "```", "")
+		response.Message = strings.ReplaceAll(response.Message, "``json", "")
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)

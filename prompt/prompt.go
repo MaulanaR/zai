@@ -149,11 +149,15 @@ func SystemMSG() string {
 		When handling data input, respond ONLY with a JSON object.
 		No explanation, no additional text.
 
-		Format for contact (customer, supplier, employee):
-		{"input" : true, "endpoint" : "contacts", "type": "kontak", "params" : {"name": "[nama]", "phone": "[phone]", "email": "[email]" , "is_customer" : boolean,"is_employee" : boolean,"is_supplier" : boolean}}
+		{"input" : true, "endpoint" : "contacts", "type": "kontak" , // other input}
 
+		Format for contact (customer, supplier, employee):
+		set "type": "kontak"
+		
 		Format for product:
-		{"input" : true, "endpoint" : "products", "type": "produk", "params" : {"name": "[nama]", "price": "[harga]", "produk.category": "[kategori]"}}
+		"type": "produk"
+
+		set params same as listed in data_input validation_rules
 	</data_input>
 </response_rules>
 
@@ -252,11 +256,12 @@ func SystemMSG() string {
 		</allowed_types>
 
 		<validation_rules>
+			- do not edit/add anything to fields already filled by the user
 			<contacts>
 				Required fields:
-				- name (string)
-				- phone (string)
-				- email (string, valid email format)
+				- name (string) as "name"
+				- phone (string) as "phone"
+				- email (string, valid email format) as "email"
 			</contacts>
 
 			<products>
@@ -266,9 +271,6 @@ func SystemMSG() string {
 				- category (string)
 			</products>
 		</validation_rules>
-		<input_rules>
-			- do not edit/add anything to fields already filled by the user
-		</input_rules>
 	</data_input>
 </data_rules>
 
@@ -296,13 +298,30 @@ func GenerateResRule() string {
 	</today_date>
 	<response_rules>
 	- Jawab pertanyaan pengguna secara natural berdasarkan data yang diberikan
+	- Jika perlu, Tambahkan bantuan/sugesti terkait data yang diberikan, Contoh : tampilkan berdasarkan spesifik data tertentu, dan lainnya agar lebih ringkas
 	- Hanya tampilkan data yang bisa dibaca manusia, jangan tampilkan data yang nilainya null/NULL
 	- Hanya sertakan informasi yang relevan dan jangan menjawab jika pertanyaan tidak terkait dengan data yang ditentukan atau tidak tentang Zahir.
 	- Format semua harga dalam mata uang Rupiah.
 	- Respon dalam BAHASA INDONESIA
 	- Jangan response dalam chart/grafik jika user tidak menginginkan
-	- JIKA pengguna ingin disajikan dalam bentuk chart/grafik, maka GUNAKAN HIGHCHART DALAM HTML & JS
-	- Default sajikan sebagai tabel html
+	- JIKA pengguna ingin disajikan dalam bentuk chart/grafik, maka gunakan HIGHCHART DALAM HTML & JS
+	- Default sajikan sebagai tabel html dengan class milik bootstrap
+	</response_rules>`)
+
+	output = strings.NewReplacer("\n", " ", "\t", " ").Replace(output)
+	return fmt.Sprint(output)
+}
+
+func GenerateForm() string {
+	output := fmt.Sprintf(`
+	<today_date>
+	` + time.Now().Format("2006-01-02") + `
+	</today_date>
+	<response_rules>
+	- Tampilkan form dalam html dan CSS bootstrap
+	- Tampilkan keseluruhan kode,Jangan tambahkan penjelasan kode
+	- Buat field sesuai dengan data input yang diberikan
+	- Tambahkan tombol untuk submit, yaitu POST ke http://127.0.0.22/webhook dengan body "message"
 	</response_rules>`)
 
 	output = strings.NewReplacer("\n", " ", "\t", " ").Replace(output)

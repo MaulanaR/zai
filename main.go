@@ -24,14 +24,17 @@ const (
 )
 
 var (
-	BearerToken string
-	Slug        string
-	APIKey      string
-	APIUrl      string
-	Port        string
-	ModelAI     string
-	CacheChat   CacheEntry
-	CacheData   CacheEntry
+	BearerToken   string
+	Slug          string
+	APIKey        string
+	APIUrl        string
+	Port          string
+	ModelAI       string
+	CacheChat     CacheEntry
+	CacheData     CacheEntry
+	VisionAPIKey  string
+	VisionAPIUrl  string
+	VisionModelAI string
 )
 
 func Init() {
@@ -43,6 +46,10 @@ func Init() {
 	APIKey = os.Getenv("API_KEY")
 	APIUrl = os.Getenv("API_URL")
 	ModelAI = os.Getenv("MODEL_AI")
+
+	VisionAPIKey = os.Getenv("VISION_API_KEY")
+	VisionAPIUrl = os.Getenv("VISION_API_URL")
+	VisionModelAI = os.Getenv("VISION_MODEL_AI")
 	Port = os.Getenv("PORT")
 }
 
@@ -61,6 +68,7 @@ type ChatBot struct {
 // Struktur lainnya tetap sama
 type WebhookRequest struct {
 	Message string `json:"message"`
+	Image   string `json:"image"`
 }
 
 type ZahirResponse struct {
@@ -91,6 +99,10 @@ func (bot *ChatBot) getAPIDecisionEndpointCategory(message string) (*APIDecision
 		return nil, err
 	}
 
+	// Remove ```json ``` from the response if present
+	claudeResp = strings.TrimPrefix(claudeResp, "```json")
+	claudeResp = strings.TrimSuffix(claudeResp, "```")
+
 	var decision APIDecision
 	if err := json.Unmarshal([]byte(claudeResp), &decision); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %v", err)
@@ -114,9 +126,146 @@ func (bot *ChatBot) getAPIDecision(message string, systemPrompt string) (*APIDec
 	return &decision, nil
 }
 
-// ProcessMessage dengan logika yang diperbarui
-func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
-	endCat, err := bot.getAPIDecisionEndpointCategory(message)
+// Add new function for Vision AI
+func (bot *ChatBot) askVisionAI(imageBase64, prompt string) (string, error) {
+	message := []map[string]interface{}{
+		{
+			"role": "user",
+			"content": []map[string]interface{}{
+				{
+					"type": "text",
+					"text": prompt,
+				},
+				{
+					"type": "image_url",
+					"image_url": map[string]string{
+						"url": imageBase64,
+					},
+				},
+			},
+		},
+	}
+
+	visionReq := map[string]interface{}{
+		"model":      VisionModelAI,
+		"messages":   message,
+		"max_tokens": 3500,
+	}
+
+	jsonData, err := json.Marshal(visionReq)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", VisionAPIUrl, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Authorization", "Bearer "+VisionAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := bot.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	var visionResp map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&visionResp); err != nil {
+		return "", err
+	}
+
+	if choices, ok := visionResp["choices"].([]interface{}); ok && len(choices) > 0 {
+		if choice, ok := choices[0].(map[string]interface{}); ok {
+			if message, ok := choice["message"].(map[string]interface{}); ok {
+				if content, ok := message["content"].(string); ok {
+					return content, nil
+				}
+			}
+		}
+	}
+
+	return "", fmt.Errorf("invalid response format from Vision AI")
+}
+
+// Modify ProcessMessage to handle image analysis
+func (bot *ChatBot) ProcessMessage(req WebhookRequest) *ZahirResponse {
+	// If image exists, process with Vision AI first
+	if req.Image != "" {
+		visionResponse, err := bot.askVisionAI(req.Image, `Analisa gambar lalu berikan data apa yang tampil, tentukan berdasarkan aturan ini : 
+		<available_fields>
+				<sales_invoices>
+					- customer.name
+					- payment_status (enum: open, paid)
+					- date
+					- time
+					- number
+					- description
+					- currency.name
+					- subtotal
+					- total_discount
+					- subtotal_before_tax
+					- total_tax
+					- total_cash_amount
+					- total_amount
+					- total_payment
+					- line_items (product information)
+				</sales_invoices>
+
+				<purchases_invoices>
+					- description
+					- date
+					- time
+					- number
+					- note
+					- total_amount
+				</purchases_invoices>
+
+				<products>
+					- code
+					- name
+					- description
+					- category.name
+					- catalog.name
+					- quantity.on_hand
+					- quantity.on_order
+					- quantity.on_hold
+					- unit_price_gross
+					- unit_price
+					- unit_cogs
+				</products>
+
+				<contacts>
+					- name
+					- note
+					- national_id_number
+					- tax_id_number
+					- is_customer
+					- is_supplier
+					- is_employee
+					- is_salesman
+					- is_active
+					- customer_category.name
+				</contacts>
+			</available_fields> jika tidak ada informasi relevan berarti berikan informasi barang tersebut untuk nantinya di input, gunakan aturan products`)
+		if err != nil {
+			return &ZahirResponse{
+				Status:  "error",
+				Message: fmt.Sprintf("Failed to analyze image: %v", err),
+			}
+		}
+
+		// Combine vision analysis with user message
+		if req.Message != "" {
+			req.Message = fmt.Sprintf("Context from image: %s\n\nUser question: %s", visionResponse, req.Message)
+		} else {
+			req.Message = visionResponse
+		}
+	}
+
+	// Continue with existing logic for processing message
+	endCat, err := bot.getAPIDecisionEndpointCategory(req.Message)
 	if err != nil {
 		return &ZahirResponse{
 			Status:  "error",
@@ -125,7 +274,7 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 	}
 
 	if endCat.Input {
-		if endCat.Type == "kontak" || endCat.Type == "customer" || endCat.Type == "supplier" || endCat.Type == "employee" {
+		if endCat.Type == "kontak" || endCat.Type == "customer" || endCat.Type == "supplier" || endCat.Type == "employee" || endCat.Type == "products" {
 			zRes, err := bot.postToAPI(endCat.Endpoint, endCat.Params)
 			if err != nil {
 				return &ZahirResponse{
@@ -136,7 +285,7 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 
 			// jika errornya ada, maka balikan ke ai
 			if zRes.Error != nil {
-				rs, err := bot.askAI(message, prompt.GenerateForm())
+				rs, err := bot.askAI(req.Message, prompt.GenerateForm())
 				zRes.Status = "OK"
 				zRes.Message = rs
 				zRes.Error = nil
@@ -166,7 +315,7 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 			fmt.Println(apiResp.Data)
 			fmt.Println("===== END RESPON FROM API =====")
 
-			interpretation, err := bot.interpretAPIResponse(message, apiResp, endCat.Endpoint)
+			interpretation, err := bot.interpretAPIResponse(req.Message, apiResp, endCat.Endpoint)
 			if err != nil {
 				return apiResp
 			}
@@ -179,7 +328,7 @@ func (bot *ChatBot) ProcessMessage(message string) *ZahirResponse {
 				Message: interpretation,
 			}
 		} else {
-			interpretation, err := bot.interpretMessage(message)
+			interpretation, err := bot.interpretMessage(req.Message)
 			if err != nil {
 				return &ZahirResponse{
 					Status:  "error",
@@ -580,7 +729,7 @@ func (bot *ChatBot) askClaudeFromAPIRes(userMsg, endpoint, apiData string) (stri
 		// "user":        "maulana",
 		"model":       ModelAI,
 		"temperature": 0,
-		"top_p":       0.01,
+		"top_p":       0.6,
 		"messages":    message,
 		"max_tokens":  3500,
 	}
@@ -659,7 +808,7 @@ func webhookHandler(bot *ChatBot) http.HandlerFunc {
 			return
 		}
 
-		response := bot.ProcessMessage(req.Message)
+		response := bot.ProcessMessage(req)
 		response.Message = strings.ReplaceAll(response.Message, "```html", "")
 		response.Message = strings.ReplaceAll(response.Message, "```", "")
 		response.Message = strings.ReplaceAll(response.Message, "``json", "")
@@ -674,6 +823,11 @@ func main() {
 	bot := NewChatBot()
 
 	http.HandleFunc("/webhook", webhookHandler(bot))
+
+	// Serve the index.html file
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "index.html")
+	})
 
 	log.Printf("Server starting on port %s", Port)
 	if err := http.ListenAndServe(Port, nil); err != nil {

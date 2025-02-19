@@ -131,8 +131,7 @@ Respond only with the JSON decision object:
 }
 
 func SystemMSG() string {
-	output := fmt.Sprintf(`
-<response_rules>
+	output := `<response_rules>
 	<!-- Strict response format rules -->
 	<api_request>
 		When data is needed, respond ONLY with a JSON object containing endpoint and params.
@@ -149,20 +148,23 @@ func SystemMSG() string {
 		When handling data input, respond ONLY with a JSON object.
 		No explanation, no additional text.
 
-		{"input" : true, "endpoint" : "contacts", "type": "kontak" , // other input}
+		{"input" : true, "endpoint" : "endpoint", "type": "type"}
 
 		Format for contact (customer, supplier, employee):
-		set "type": "kontak"
+		set "type": "kontak", "endpoint" : "contacts"
 		
 		Format for product:
-		"type": "produk"
+		"type": "products" , "endpoint" : "products"
+
+		Formet fot sales:
+		"type" : "sales_invoices", "endpoint" : "sales_invoices"
 
 		set params same as listed in data_input validation_rules
 	</data_input>
 </response_rules>
 
 <data_rules>
-	<!-- Previous data rules remain the same -->
+	1. Mapping data yang ada dengan avaiable fields yang telah ditentukan
 	<api_endpoints>
 		<available_endpoints>
 			- contacts: Customer, Vendor, Employee queries
@@ -285,15 +287,14 @@ func SystemMSG() string {
 
 <today_date>
 ` + time.Now().Format("2006-01-02") + `
-</today_date>`)
+</today_date>`
 
 	output = strings.NewReplacer("\n", " ", "\t", " ").Replace(output)
 	return fmt.Sprint(output)
 }
 
 func GenerateResRule() string {
-	output := fmt.Sprintf(`
-	<today_date>
+	output := `<today_date>
 	` + time.Now().Format("2006-01-02") + `
 	</today_date>
 	<response_rules>
@@ -306,23 +307,79 @@ func GenerateResRule() string {
 	- Jangan response dalam chart/grafik jika user tidak menginginkan
 	- JIKA pengguna ingin disajikan dalam bentuk chart/grafik, maka gunakan HIGHCHART DALAM HTML & JS
 	- Default sajikan sebagai tabel html dengan class milik bootstrap
-	</response_rules>`)
+	</response_rules>`
 
 	output = strings.NewReplacer("\n", " ", "\t", " ").Replace(output)
 	return fmt.Sprint(output)
 }
 
 func GenerateForm() string {
-	output := fmt.Sprintf(`
-	<today_date>
+	output := `<today_date>
 	` + time.Now().Format("2006-01-02") + `
 	</today_date>
 	<response_rules>
 	- Tampilkan form dalam html dan CSS bootstrap
 	- Tampilkan keseluruhan kode,Jangan tambahkan penjelasan kode
 	- Buat field sesuai dengan data input yang diberikan
-	- Tambahkan tombol untuk submit, yaitu POST ke http://127.0.0.22/webhook dengan body "message"
-	</response_rules>`)
+	- Tambahkan tombol untuk submit, yang isinya fungsi javascript yang mengirimkan isian data dari form input ke input id="messageInput", dan jalankan fungsi click pada tombol dengan id="sendButton"
+	- Pastikan form input yang dibuat sesuai dengan avaiable_fields
+	</response_rules>
+	
+	<available_fields>
+	<sales_invoices>
+		- customer.name
+		- payment_status (enum: open, paid)
+		- date
+		- time
+		- number
+		- description
+		- currency.name
+		- subtotal
+		- total_discount
+		- subtotal_before_tax
+		- total_tax
+		- total_cash_amount
+		- total_amount
+		- total_payment
+		- line_items (product information)
+	</sales_invoices>
+
+	<purchases_invoices>
+		- description
+		- date
+		- time
+		- number
+		- note
+		- total_amount
+	</purchases_invoices>
+
+	<products>
+		- code
+		- name
+		- description
+		- category.name
+		- catalog.name
+		- quantity.on_hand
+		- quantity.on_order
+		- quantity.on_hold
+		- unit_price_gross
+		- unit_price
+		- unit_cogs
+	</products>
+
+	<contacts>
+		- name
+		- note
+		- national_id_number
+		- tax_id_number
+		- is_customer
+		- is_supplier
+		- is_employee
+		- is_salesman
+		- is_active
+		- customer_category.name
+	</contacts>
+</available_fields>`
 
 	output = strings.NewReplacer("\n", " ", "\t", " ").Replace(output)
 	return fmt.Sprint(output)

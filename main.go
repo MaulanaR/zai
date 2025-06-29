@@ -8,9 +8,8 @@ import (
 	"log"
 	"net/http"
 	"net/url"
-	"strings"
-
 	"os"
+	"strings"
 
 	"github.com/MaulanaR/zai/model"
 	"github.com/MaulanaR/zai/prompt"
@@ -836,9 +835,23 @@ func main() {
 
 	http.HandleFunc("/webhook", webhookHandler(bot))
 
-	// Serve the index.html file
+	// Serve the index.html file and inject WEBHOOK_URL from env
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "index.html")
+		webhookUrl := os.Getenv("WEBHOOK_URL")
+		if webhookUrl == "" {
+			webhookUrl = "http://127.0.0.1:8991/webhook"
+		}
+		indexBytes, err := os.ReadFile("index.html")
+		if err != nil {
+			http.Error(w, "index.html not found", http.StatusInternalServerError)
+			return
+		}
+		// Inject <script>window.WEBHOOK_URL = "...";</script> after <head>
+		htmlStr := string(indexBytes)
+		inject := fmt.Sprintf(`<script>window.WEBHOOK_URL = "%s";</script>`, webhookUrl)
+		htmlStr = strings.Replace(htmlStr, "<head>", "<head>\n    "+inject, 1)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(htmlStr))
 	})
 
 	log.Printf("Server starting on port %s", Port)

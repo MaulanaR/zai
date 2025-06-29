@@ -67,8 +67,10 @@ type ChatBot struct {
 
 // Struktur lainnya tetap sama
 type WebhookRequest struct {
-	Message string `json:"message"`
-	Image   string `json:"image"`
+	Message     string `json:"message"`
+	Image       string `json:"image"`
+	BearerToken string `json:"bearer_token"`
+	Slug        string `json:"slug"`
 }
 
 type ZahirResponse struct {
@@ -189,8 +191,18 @@ func (bot *ChatBot) askVisionAI(imageBase64, prompt string) (string, error) {
 	return "", fmt.Errorf("invalid response format from Vision AI")
 }
 
-// Modify ProcessMessage to handle image analysis
+// Modify ProcessMessage to accept dynamic BearerToken and Slug
 func (bot *ChatBot) ProcessMessage(req WebhookRequest) *ZahirResponse {
+	// Use dynamic BearerToken and Slug if provided, else fallback to env
+	bearerToken := req.BearerToken
+	if bearerToken == "" {
+		bearerToken = BearerToken
+	}
+	slug := req.Slug
+	if slug == "" {
+		slug = Slug
+	}
+
 	// If image exists, process with Vision AI first
 	if req.Image != "" {
 		visionResponse, err := bot.askVisionAI(req.Image, `Analisa gambar lalu berikan data apa yang tampil, tentukan berdasarkan aturan ini : 
@@ -275,7 +287,7 @@ func (bot *ChatBot) ProcessMessage(req WebhookRequest) *ZahirResponse {
 
 	if endCat.Input {
 		if endCat.Type == "kontak" || endCat.Type == "customer" || endCat.Type == "supplier" || endCat.Type == "employee" || endCat.Type == "products" {
-			zRes, err := bot.postToAPI(endCat.Endpoint, endCat.Params)
+			zRes, err := bot.postToAPI(endCat.Endpoint, endCat.Params, bearerToken, slug)
 			if err != nil {
 				return &ZahirResponse{
 					Status:  "error",
@@ -304,7 +316,7 @@ func (bot *ChatBot) ProcessMessage(req WebhookRequest) *ZahirResponse {
 	} else {
 		if endCat.Endpoint != "" && endCat.Endpoint != "null" {
 			// memerlukan data baru
-			apiResp, err := bot.getDataFromAPI(endCat)
+			apiResp, err := bot.getDataFromAPIWithAuth(endCat, bearerToken, slug)
 			if err != nil {
 				return &ZahirResponse{
 					Status:  "error",
@@ -835,7 +847,97 @@ func main() {
 	}
 }
 
-func (bot *ChatBot) postToAPI(endpoint string, params map[string]any) (ZahirResponse, error) {
+// Tambahkan versi baru getDataFromAPI yang menerima bearerToken dan slug
+func (bot *ChatBot) getDataFromAPIWithAuth(decision *APIDecision, bearerToken, slug string) (*ZahirResponse, error) {
+	params := url.Values{}
+	for key, value := range decision.Params {
+		params.Add(key, fmt.Sprintf("%v", value))
+	}
+
+	urlStr := fmt.Sprintf("%s/%s", BaseAPIURL, strings.TrimSpace(decision.Endpoint))
+	if len(params) > 0 {
+		urlStr = fmt.Sprintf("%s?%s", urlStr, params.Encode())
+	}
+
+	req, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", bearerToken))
+	req.Header.Add("slug", slug)
+	req.Header.Add("Content-Type", "application/json")
+
+	fmt.Println("========")
+	fmt.Printf("Request URL: %s\n", urlStr)
+	fmt.Printf("Request Headers: %v\n", req.Header)
+	fmt.Printf("Request Body: %s\n", params.Encode())
+	fmt.Println("========")
+
+	resp, err := bot.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	var zahirResp ZahirResponse
+	switch decision.Endpoint {
+	case "contacts":
+		r := model.ContactResp{}
+		if err := grest.NewJSON(bodyBytes, true).ToFlat().Unmarshal(&r); err != nil {
+			return nil, err
+		}
+		zahirResp.Data = r.Data
+	case "sales_invoices":
+		r := model.SalesInvoicesResp{}
+		if err := grest.NewJSON(bodyBytes, true).ToFlat().Unmarshal(&r); err != nil {
+			return nil, err
+		}
+		zahirResp.Data = r.Data
+	case "products":
+		r := model.ProductResp{}
+		if err := grest.NewJSON(bodyBytes, true).ToFlat().Unmarshal(&r); err != nil {
+			return nil, err
+		}
+		zahirResp.Data = r.Data
+	case "purchases_invoices":
+		r := model.PurchaseInvResp{}
+		if err := grest.NewJSON(bodyBytes, true).ToFlat().Unmarshal(&r); err != nil {
+			return nil, err
+		}
+		zahirResp.Data = r.Data
+	case "dashboards/daily_sales":
+		var d interface{}
+		if err := json.Unmarshal(bodyBytes, &d); err != nil {
+			return nil, err
+		}
+		zahirResp.Data = d
+	case "dashboards/balance_sheet_simple":
+		var d interface{}
+		if err := json.Unmarshal(bodyBytes, &d); err != nil {
+			return nil, err
+		}
+		zahirResp.Data = d
+	default:
+		if err := json.Unmarshal(bodyBytes, &zahirResp); err != nil {
+			var d interface{}
+			if err := json.Unmarshal(bodyBytes, &d); err != nil {
+				return nil, err
+			}
+			zahirResp.Data = d
+		}
+	}
+
+	return &zahirResp, nil
+}
+
+// Ubah postToAPI agar menerima bearerToken dan slug
+func (bot *ChatBot) postToAPI(endpoint string, params map[string]any, bearerToken, slug string) (ZahirResponse, error) {
 	zRes := ZahirResponse{}
 	fmt.Println("==== POST PAYLOAD====")
 	fmt.Println(params)
@@ -851,8 +953,8 @@ func (bot *ChatBot) postToAPI(endpoint string, params map[string]any) (ZahirResp
 		return zRes, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+BearerToken)
-	req.Header.Set("slug", Slug)
+	req.Header.Set("Authorization", "Bearer "+bearerToken)
+	req.Header.Set("slug", slug)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := bot.client.Do(req)

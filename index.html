@@ -188,6 +188,31 @@
     </nav>
 
     <div class="container chat-container">
+        <!-- Add modal for Bearer Token and Slug -->
+        <div class="modal fade" id="authModal" tabindex="-1" aria-labelledby="authModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="authModalLabel">Enter Bearer Token & Slug</h5>
+                    </div>
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="bearerTokenInput" class="form-label">Bearer Token</label>
+                            <input type="text" class="form-control" id="bearerTokenInput" autocomplete="off">
+                        </div>
+                        <div class="mb-3">
+                            <label for="slugInput" class="form-label">Slug</label>
+                            <input type="text" class="form-control" id="slugInput" autocomplete="off">
+                        </div>
+                        <div class="alert alert-danger d-none" id="authError"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-primary" id="authSubmit">Start Chat</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <div class="chat-box mt-4" id="chatBox"></div>
 
         <div class="alert alert-danger d-none" id="errorMessage" role="alert"></div>
@@ -241,6 +266,40 @@
             let stream = null;
 
             let chartCounter = 0;
+            let bearerToken = '';
+            let slug = '';
+
+            // Show modal on load
+            const authModal = new bootstrap.Modal(document.getElementById('authModal'), { backdrop: 'static', keyboard: false });
+            const authSubmit = document.getElementById('authSubmit');
+            const bearerTokenInput = document.getElementById('bearerTokenInput');
+            const slugInput = document.getElementById('slugInput');
+            const authError = document.getElementById('authError');
+
+            function showAuthModal() {
+                authError.classList.add('d-none');
+                bearerTokenInput.value = '';
+                slugInput.value = '';
+                authModal.show();
+            }
+
+            authSubmit.addEventListener('click', function() {
+                const token = bearerTokenInput.value.trim();
+                const s = slugInput.value.trim();
+                if (!token || !s) {
+                    authError.textContent = 'Both Bearer Token and Slug are required.';
+                    authError.classList.remove('d-none');
+                    return;
+                }
+                bearerToken = token;
+                slug = s;
+                authModal.hide();
+                // Add initial greeting
+                addMessage('Hello! I am Zahir Bot AI. How can I help you today?');
+            });
+
+            // Prevent chat interaction before auth
+            showAuthModal();
 
             async function initCamera() {
                 try {
@@ -328,6 +387,10 @@
             });
 
             async function sendMessage(message = null) {
+                if (!bearerToken || !slug) {
+                    showAuthModal();
+                    return;
+                }
                 const messageText = message || messageInput.value.trim();
                 if (!messageText && !imageBase64) return;
 
@@ -343,7 +406,12 @@
                         headers: {
                             'Content-Type': 'application/json',
                         },
-                        body: JSON.stringify({ message: messageText, image: imageBase64 })
+                        body: JSON.stringify({ 
+                            message: messageText, 
+                            image: imageBase64,
+                            bearer_token: bearerToken,
+                            slug: slug
+                        })
                     });
 
                     const data = await response.json();
@@ -419,9 +487,6 @@
                     sendMessage();
                 }
             });
-
-            // Add initial greeting
-            addMessage('Hello! I am Zahir Bot AI. How can I help you today?');
         });
     </script>
 </body>
